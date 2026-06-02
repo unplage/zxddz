@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>像素斗地主 · P2P联机版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    <link rel="manifest" href="./manifest.json">
+    <style>
+        * {
+            image-rendering: pixelated;
+            font-family: 'Press Start 2P', cursive;
+            -webkit-tap-highlight-color: transparent;
+            touch-action: manipulation;
+            box-sizing: border-box;
+        }
+        body {
+            background-color: #1a1a2e;
+            background-image: radial-gradient(circle at 50% 50%, #16213e 0%, #0f0f23 100%);
+            overflow: hidden;
+            position: fixed;
+            width: 100%;
+            height: 100%;
+            overscroll-behavior: none;
+        }
+        .game-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            overflow: hidden;
+        }
+        .pixel-border {
+            box-shadow: -3px 0 0 0 #000, 3px 0 0 0 #000, 0 -3px 0 0 #000, 0 3px 0 0 #000, inset -3px -3px 0 0 rgba(0,0,0,0.2), inset 3px 3px 0 0 rgba(255,255,255,0.2);
+        }
+        .card {
+            background: #fff;
+            border: 2px solid #000;
+            border-radius: 4px;
+            position: relative;
+            cursor: pointer;
+            transition: all 0.15s ease;
+            box-shadow: 2px 2px 0 rgba(0,0,0,0.3);
+            flex-shrink: 0;
+            user-select: none;
+        }
+        @media (max-width: 380px) { .card { width: 38px; height: 53px; font-size: 9px; margin-left: -16px; } }
+        @media (min-width: 381px) and (max-width: 768px) { .card { width: 44px; height: 61px; font-size: 11px; margin-left: -18px; } }
+        @media (min-width: 769px) { .card { width: 60px; height: 84px; font-size: 14px; margin-left: -20px; } }
+        .card:first-child { margin-left: 0 !important; }
+        .card:active { transform: scale(0.95); }
+        .card.selected {
+            transform: translateY(-12px) scale(1.05);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.4), 0 0 10px #ffd700;
+            z-index: 20;
+            border-color: #ffd700;
+            background: #fffacd;
+        }
+        .card.dragging {
+            opacity: 0.6;
+            z-index: 100;
+        }
+        .card-back { background: #2a2a4a; background-image: repeating-linear-gradient(45deg, transparent, transparent 5px, #3a3a5a 5px, #3a3a5a 10px); }
+        .suit-red { color: #e74c3c; }
+        .suit-black { color: #2c3e50; }
+        .pixel-btn {
+            background: #4a90e2;
+            border: 3px solid #000;
+            padding: 10px 16px;
+            font-size: 11px;
+            cursor: pointer;
+            box-shadow: 0 4px 0 #2c5aa0, 0 6px 8px rgba(0,0,0,0.3);
+            transition: all 0.1s;
+            text-transform: uppercase;
+            min-width: 64px;
+            min-height: 44px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            touch-action: manipulation;
+        }
+        .pixel-btn:active { transform: translateY(2px); box-shadow: 0 2px 0 #2c5aa0, 0 3px 4px rgba(0,0,0,0.3); }
+        .pixel-btn:disabled { background: #666; box-shadow: 0 4px 0 #444; opacity: 0.6; }
+        .retro-text { text-shadow: 2px 2px 0 #000; }
+        @keyframes bounce { 0%,100%{ transform: translateY(0); } 50%{ transform: translateY(-3px); } }
+        .ani-bounce { animation: bounce 0.5s infinite; }
+        @keyframes shake { 0%,100%{ transform: translateX(0); } 25%{ transform: translateX(-3px); } 75%{ transform: translateX(3px); } }
+        .ani-shake { animation: shake 0.3s; }
+        @keyframes flash { 0%,100%{ opacity:1; } 50%{ opacity:0.2; background:#ff0; } }
+        .spring-flash { animation: flash 0.6s ease-in-out; background: radial-gradient(circle, gold, transparent); pointer-events: none; }
+        .hand-wrapper { display: flex; flex-direction: column; align-items: center; gap: 0; padding: 5px; max-width: 100%; }
+        .card-row { display: flex; justify-content: center; align-items: flex-start; }
+        .card-row.second { margin-top: -10px; }
+        .status-bar { background: rgba(0,0,0,0.8); backdrop-filter: blur(10px); border-bottom: 2px solid #333; padding: 8px 12px; height: 50px; }
+        .player-area { position: fixed; bottom: 0; left: 0; right: 0; background: linear-gradient(to top, rgba(0,0,0,0.95) 0%, rgba(0,0,0,0.8) 60%, transparent 100%); padding-bottom: env(safe-area-inset-bottom, 10px); z-index: 40; padding-top: 10px; }
+        .opponent-top { position: fixed; top: 60px; display: flex; flex-direction: column; align-items: center; gap: 5px; z-index: 30; }
+        .opponent-left { left: 10px; } .opponent-right { right: 10px; }
+        .opponent-avatar { width: 48px; height: 48px; border-radius: 50%; border: 3px solid #fff; display: flex; align-items: center; justify-content: center; font-size: 24px; position: relative; box-shadow: 0 4px 8px rgba(0,0,0,0.5); }
+        .card-count { position: absolute; top: -5px; right: -5px; background: #e74c3c; color: white; width: 24px; height: 24px; border-radius: 50%; border: 2px solid #fff; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; }
+        .play-area { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 90%; max-width: 400px; height: 120px; display: flex; align-items: center; justify-content: center; z-index: 20; }
+        .toast { position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.9); color: #fff; padding: 12px 24px; border: 3px solid #fff; border-radius: 8px; font-size: 12px; z-index: 100; pointer-events: none; white-space: nowrap; }
+        .start-btn { font-size: 16px; padding: 16px 32px; min-height: 56px; }
+        .quick-actions { display: flex; gap: 10px; margin-bottom: 8px; justify-content: center; }
+        .icon-btn { width: 40px; height: 40px; border-radius: 50%; background: rgba(255,255,255,0.2); border: 2px solid #fff; display: flex; align-items: center; justify-content: center; font-size: 18px; cursor: pointer; touch-action: manipulation; }
+        .icon-btn:active { background: rgba(255,255,255,0.4); transform: scale(0.9); }
+        .history-log { position: fixed; bottom: 200px; left: 10px; background: rgba(0,0,0,0.7); padding: 5px 10px; border-radius: 5px; font-size: 8px; z-index: 45; pointer-events: none; max-width: 150px; }
+        .scanlines { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0,0,0,0.05) 50%, rgba(0,0,0,0.05)); background-size: 100% 4px; pointer-events: none; z-index: 9999; opacity: 0.2; }
+        .safe-area-top { padding-top: env(safe-area-inset-top); }
+        .safe-area-bottom { padding-bottom: env(safe-area-inset-bottom); }
+        .connect-panel {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: #000000dd;
+            backdrop-filter: blur(10px);
+            border: 3px solid #fff;
+            border-radius: 16px;
+            padding: 20px;
+            z-index: 200;
+            width: 90%;
+            max-width: 400px;
+            text-align: center;
+        }
+        .peer-id {
+            background: #2a2a3e;
+            padding: 8px;
+            border-radius: 8px;
+            font-size: 10px;
+            word-break: break-all;
+            margin: 10px 0;
+        }
+        .input-group {
+            margin: 15px 0;
+        }
+        .input-group input {
+            width: 100%;
+            padding: 10px;
+            background: #1e1e2e;
+            border: 2px solid #fff;
+            color: #fff;
+            font-size: 10px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.95);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            overflow-y: auto;
+            -webkit-overflow-scrolling: touch;
+        }
+        .modal-content {
+            background: #2a2a3e;
+            border: 4px solid #fff;
+            border-radius: 8px;
+            width: 90%;
+            max-width: 400px;
+            margin: 20px auto;
+            padding: 16px;
+        }
+        .history-item {
+            background: #1e1e2e;
+            margin: 8px 0;
+            padding: 8px;
+            border-left: 4px solid;
+            font-size: 8px;
+            word-break: break-word;
+        }
+        .history-win { border-left-color: #4ade80; }
+        .history-lose { border-left-color: #f87171; }
+    </style>
+</head>
+<body class="text-white safe-area-top safe-area-bottom">
+<div class="scanlines"></div>
+<div class="game-container">
+    <!-- 顶部状态栏 -->
+    <div class="status-bar fixed top-0 left-0 right-0 flex items-center justify-between z-50 safe-area-top px-3">
+        <div class="flex items-center gap-2">
+            <div class="text-yellow-400 text-[10px] retro-text">💰<span id="coins">1000</span></div>
+        </div>
+        <div class="flex items-center gap-2">
+            <div id="connectionStatus" class="text-[8px] bg-green-600 px-2 py-1 rounded">未连接</div>
+            <div id="statsBtn" class="stats-btn pixel-btn" style="background:#333; padding:4px 8px;" onclick="showStatsModal()">📊 战绩</div>
+        </div>
+    </div>
+
+    <!-- 游戏主区域 -->
+    <div class="relative w-full h-full pt-12 pb-36" id="gameArea">
+        <div class="opponent-top opponent-left"><div class="opponent-avatar bg-blue-600 pixel-border">🧑‍🌾<div class="card-count" id="leftCount">0</div></div><div class="text-[10px] bg-black/50 px-2 py-1 rounded">农民A</div><div class="text-[10px] text-yellow-400 h-4" id="leftStatus"></div></div>
+        <div class="opponent-top opponent-right"><div class="opponent-avatar bg-blue-600 pixel-border">👩‍🌾<div class="card-count" id="rightCount">0</div></div><div class="text-[10px] bg-black/50 px-2 py-1 rounded">农民B</div><div class="text-[10px] text-yellow-400 h-4" id="rightStatus"></div></div>
+        <div class="play-area"><div id="playTable" class="flex flex-col items-center gap-2 w-full"><div class="text-[10px] text-yellow-400 mb-1" id="scoreDisplay">底分: 1</div><div class="flex gap-1 justify-center min-h-[50px] items-center bg-black/20 rounded-lg p-2 w-full" id="playArea"><span class="text-gray-500 text-[10px]">等待出牌...</span></div><div class="text-[10px] text-white/70" id="lastPlayer"></div></div></div>
+        <div class="history-log" id="historyLog">📜 出牌记录</div>
+        <div class="player-area safe-area-bottom">
+            <div class="text-yellow-400 text-[11px] retro-text text-center mb-1 h-5" id="playerStatus">点击选牌，再次点击取消</div>
+            <div class="quick-actions"><div class="icon-btn" onclick="showHint()" title="提示">💡</div><div class="icon-btn" onclick="resetSelection()" title="重置">🔄</div><div class="icon-btn" onclick="toggleRules()" title="规则">📋</div></div>
+            <div class="hand-wrapper" id="handContainer"><div id="playerHand"></div></div>
+            <div class="flex justify-center gap-2 p-2" id="controls"><button id="callBtn" class="pixel-btn bg-green-500 text-[10px]" onclick="callScore(0)">不叫</button><button id="oneBtn" class="pixel-btn bg-blue-500 text-[10px]" onclick="callScore(1)">1分</button><button id="twoBtn" class="pixel-btn bg-yellow-500 text-[10px]" onclick="callScore(2)">2分</button><button id="threeBtn" class="pixel-btn bg-red-500 text-[10px]" onclick="callScore(3)">3分</button></div>
+        </div>
+    </div>
+
+    <!-- 连接面板 -->
+    <div id="connectPanel" class="connect-panel">
+        <h2 class="text-yellow-400 text-sm mb-3">🃏 在线斗地主</h2>
+        <div class="peer-id">
+            🔑 你的房间码：<span id="myPeerId">正在生成...</span>
+        </div>
+        <div class="input-group">
+            <input type="text" id="targetPeerId" placeholder="输入对方的房间码">
+            <button class="pixel-btn bg-green-500 w-full mt-2 text-[10px]" onclick="joinGame()">加入房间</button>
+        </div>
+        <div class="text-[8px] text-gray-400 mt-3">💡 房主创建房间后，另外两人输入房主的房间码加入即可开始游戏</div>
+    </div>
+
+    <div id="rulesModal" class="hidden fixed inset-0 bg-black/95 flex items-center justify-center z-50 p-4"><div class="bg-gray-800 p-4 pixel-border w-full max-w-sm max-h-[80vh] overflow-y-auto"><h2 class="text-lg text-yellow-400 mb-4 retro-text text-center">游戏规则</h2><div class="text-[10px] leading-6 text-gray-300 space-y-2"><div class="bg-black/30 p-2 rounded mb-3"><p class="text-yellow-400 mb-1">✨ P2P联机 ✨</p><p>• 房主创建房间，其他人通过房间码加入</p><p>• 所有游戏逻辑由房主机运行，保证同步</p><p>• 出牌点击即可，朋友对战无AI</p></div><p>• 牌型：单张、对子、三带一/对、顺子(5+)、连对(3+)、四带二、炸弹、王炸</p><p>• 春天/反春天：底分×2</p></div><button onclick="toggleRules()" class="pixel-btn bg-red-500 mt-4 w-full text-[12px]">关闭</button></div></div>
+    <div id="gameOverScreen" class="hidden fixed inset-0 bg-black/95 flex flex-col items-center justify-center z-50 p-4"><h2 id="resultTitle" class="text-2xl retro-text mb-4 text-center"></h2><div id="resultContent" class="text-center mb-6 text-[12px]"></div><button onclick="resetGame()" class="pixel-btn bg-green-500 w-full max-w-[200px]">再来一局</button></div>
+    <div id="statsModal" class="modal hidden">
+        <div class="modal-content">
+            <h2 class="text-lg text-yellow-400 mb-4 retro-text text-center">📊 历史战绩</h2>
+            <div id="statsList" class="space-y-2 mb-4"></div>
+            <div class="flex gap-2"><button onclick="clearHistory()" class="pixel-btn bg-red-500 flex-1 text-[10px]">清空记录</button><button onclick="closeStatsModal()" class="pixel-btn bg-gray-500 flex-1 text-[10px]">关闭</button></div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // ======================== P2P 网络部分 ========================
+    let peer = null;
+    let connections = []; // 存储连接到其他玩家的连接对象 (房主会有两个连接)
+    let myRole = null;    // 'host' 或 'client'
+    let gameStarted = false;
+    let myPlayerIndex = -1; // 0:自己, 1:左农民, 2:右农民 (由房主分配)
+    let hostPeerId = null;
+    
+    // 游戏状态（由房主权威维护，客户端只同步）
+    let GameState = {
+        phase: 'idle',
+        players: [[], [], []],
+        landlord: -1,
+        currentPlayer: -1,
+        lastPlay: null,
+        lastPlayerId: -1,
+        currentScore: 0,
+        bombCount: 0,
+        passCount: 0,
+        firstPlayMade: false,
+        lordPlayCount: 0,
+        farmerPlayed: false,
+        deck: [],
+        lordCards: []
+    };
+    
+    let selectedCards = new Set();
+    let myHand = [];     // 本地手牌副本，用于显示和选牌
+    let matchHistory = [];
+    let coins = 1000;
+    let stats = { total: 0, win: 0 };
+    
+    // 初始化PeerJS
+    function initPeer() {
+        peer = new Peer({
+            debug: 2,
+            config: { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }
+        });
+        peer.on('open', (id) => {
+            document.getElementById('myPeerId').innerText = id;
+            document.getElementById('connectionStatus').innerHTML = `📡 房间码: ${id}`;
+        });
+        peer.on('connection', (conn) => {
+            // 有人连接我（我是房主）
+            connections.push(conn);
+            setupConnection(conn);
+            if (connections.length === 2 && !gameStarted) {
+                startGameAsHost();
+            }
+        });
+        peer.on('error', (err) => console.error('Peer error:', err));
+    }
+    
+    function setupConnection(conn) {
+        conn.on('data', (data) => {
+            if (myRole === 'host') {
+                handleClientMessage(data, conn);
+            } else {
+                handleHostMessage(data);
+            }
+        });
+        conn.on('close', () => {
+            showToast("玩家断开连接");
+            connections = connections.filter(c => c !== conn);
+        });
+    }
+    
+    function joinGame() {
+        const target = document.getElementById('targetPeerId').value.trim();
+        if (!target) return showToast("请输入房间码");
+        if (peer === null) return showToast("Peer未初始化");
+        const conn = peer.connect(target);
+        conn.on('open', () => {
+            connections.push(conn);
+            setupConnection(conn);
+            myRole = 'client';
+            hostPeerId = target;
+            document.getElementById('connectPanel').style.display = 'none';
+            document.getElementById('connectionStatus').innerHTML = `🔗 已连接房主 ${target.substring(0,6)}`;
+            showToast("已加入房间，等待房主开始游戏");
+        });
+        conn.on('error', (e) => showToast("连接失败，请检查房间码"));
+    }
+    
+    // 房主开始游戏
+    function startGameAsHost() {
+        myRole = 'host';
+        myPlayerIndex = 0;
+        document.getElementById('connectPanel').style.display = 'none';
+        document.getElementById('connectionStatus').innerHTML = `👑 房主 (等待两人)`;
+        showToast("两人已加入，游戏开始！");
+        // 初始化一局新游戏
+        initOnlineGame();
+        // 发送游戏初始化状态给所有客户端
+        broadcastState();
+    }
+    
+    function broadcastState() {
+        const stateToSend = {
+            players: GameState.players,
+            landlord: GameState.landlord,
+            currentPlayer: GameState.currentPlayer,
+            lastPlay: GameState.lastPlay,
+            lastPlayerId: GameState.lastPlayerId,
+            currentScore: GameState.currentScore,
+            bombCount: GameState.bombCount,
+            passCount: GameState.passCount,
+            firstPlayMade: GameState.firstPlayMade,
+            lordPlayCount: GameState.lordPlayCount,
+            farmerPlayed: GameState.farmerPlayed,
+            phase: GameState.phase,
+            myPlayerIndex: myPlayerIndex
+        };
+        for (let conn of connections) {
+            conn.send({ type: 'stateSync', state: stateToSend });
+        }
+    }
+    
+    function handleClientMessage(data, conn) {
+        if (data.type === 'action') {
+            // 客户端发来的操作: call, play, pass
+            processPlayerAction(data.action, data.params);
+        }
+    }
+    
+    function handleHostMessage(data) {
+        if (data.type === 'stateSync') {
+            // 同步状态
+            GameState.players = data.state.players;
+            GameState.landlord = data.state.landlord;
+            GameState.currentPlayer = data.state.currentPlayer;
+            GameState.lastPlay = data.state.lastPlay;
+            GameState.lastPlayerId = data.state.lastPlayerId;
+            GameState.currentScore = data.state.currentScore;
+            GameState.bombCount = data.state.bombCount;
+            GameState.passCount = data.state.passCount;
+            GameState.firstPlayMade = data.state.firstPlayMade;
+            GameState.lordPlayCount = data.state.lordPlayCount;
+            GameState.farmerPlayed = data.state.farmerPlayed;
+            GameState.phase = data.state.phase;
+            myPlayerIndex = data.state.myPlayerIndex;
+            // 更新本地手牌
+            myHand = GameState.players[myPlayerIndex];
+            renderUI();
+        } else if (data.type === 'gameStart') {
+            // 游戏开始，分配玩家索引
+            myPlayerIndex = data.myIndex;
+            myHand = data.hand;
+            renderUI();
+            showToast("游戏开始，你是" + (myPlayerIndex === 0 ? "地主" : "农民"));
+        } else if (data.type === 'actionResult') {
+            // 操作结果反馈
+            if (data.success === false) showToast(data.message);
+        }
+    }
+    
+    function processPlayerAction(action, params) {
+        // 房主执行游戏逻辑（复用之前单机版的核心函数）
+        if (action === 'call') {
+            callScoreLocal(params.score);
+        } else if (action === 'play') {
+            playCardsLocal(params.cards);
+        } else if (action === 'pass') {
+            passTurnLocal();
+        }
+        broadcastState();
+        // 通知客户端操作结果
+        // 实际不需要额外反馈
+    }
+    
+    // 发送操作到房主
+    function sendAction(action, params) {
+        if (myRole === 'host') {
+            processPlayerAction(action, params);
+        } else {
+            if (connections.length === 0) return showToast("未连接到房主");
+            connections[0].send({ type: 'action', action: action, params: params });
+        }
+    }
+    
+    // ======================== 游戏逻辑（复用单机版，略作调整） ========================
+    // 以下函数大部分从原代码移植，移除AI相关，只保留核心逻辑
+    
+    function initOnlineGame() {
+        // 发牌
+        const deck = createDeck();
+        shuffle(deck);
+        const players = [[], [], []];
+        for (let i = 0; i < 51; i++) {
+            players[i % 3].push(deck.pop());
+        }
+        const lordCards = deck.splice(0, 3);
+        GameState.deck = deck;
+        GameState.players = players;
+        GameState.lordCards = lordCards;
+        GameState.landlord = -1;
+        GameState.currentPlayer = -1;
+        GameState.lastPlay = null;
+        GameState.lastPlayerId = -1;
+        GameState.currentScore = 0;
+        GameState.bombCount = 0;
+        GameState.passCount = 0;
+        GameState.firstPlayMade = false;
+        GameState.lordPlayCount = 0;
+        GameState.farmerPlayed = false;
+        GameState.phase = 'calling';
+        GameState.currentPlayer = Math.floor(Math.random() * 3);
+        // 分配玩家索引给客户端（房主自己index=0）
+        for (let i = 0; i < connections.length; i++) {
+            const clientConn = connections[i];
+            const playerIndex = i + 1; // 1,2
+            clientConn.send({
+                type: 'gameStart',
+                myIndex: playerIndex,
+                hand: GameState.players[playerIndex]
+            });
+        }
+        // 房主自己的手牌
+        myHand = GameState.players[0];
+        renderUI();
+        processCallOnline();
+    }
+    
+    function processCallOnline() {
+        if (GameState.phase !== 'calling') return;
+        const id = GameState.currentPlayer;
+        if (id === 0 && myRole === 'host') {
+            // 房主的回合，显示叫分按钮
+            showCallButtons(true);
+        } else if (id === 0 && myRole !== 'host') {
+            showCallButtons(false);
+        } else {
+            showCallButtons(false);
+            // 非己方玩家，等待对方操作（由对方通过sendAction触发）
+        }
+    }
+    
+    function callScoreLocal(score) {
+        if (GameState.phase !== 'calling') return;
+        const id = GameState.currentPlayer;
+        if (score === 0) {
+            // 不叫
+        } else {
+            GameState.currentScore = score;
+            GameState.landlord = id;
+        }
+        if (score === 3 || (id === GameState.landlord && GameState.currentScore > 0)) {
+            confirmLordOnline();
+        } else {
+            GameState.currentPlayer = (id + 1) % 3;
+            processCallOnline();
+        }
+        broadcastState();
+    }
+    
+    function confirmLordOnline() {
+        const lord = GameState.landlord;
+        GameState.players[lord].push(...GameState.lordCards);
+        GameState.players[lord].sort((a,b)=>a.value-b.value);
+        GameState.phase = 'playing';
+        GameState.currentPlayer = lord;
+        GameState.firstPlayMade = false;
+        GameState.lordPlayCount = 0;
+        GameState.farmerPlayed = false;
+        // 更新本地的myHand
+        if (lord === 0) myHand = GameState.players[0];
+        else if (myPlayerIndex === lord) myHand = GameState.players[myPlayerIndex];
+        renderUI();
+        broadcastState();
+        showToast(`玩家${lord === 0 ? '你' : (lord === 1 ? '左农民' : '右农民')}成为地主`);
+        processPlayOnline();
+    }
+    
+    function processPlayOnline() {
+        if (GameState.phase !== 'playing') return;
+        const id = GameState.currentPlayer;
+        if (id === myPlayerIndex) {
+            // 我的回合，启用出牌按钮
+            enablePlayControls(true);
+        } else {
+            enablePlayControls(false);
+        }
+        // 更新状态文字
+        document.getElementById('playerStatus').innerText = (id === myPlayerIndex) ? "你的回合" : `等待玩家${id}出牌`;
+    }
+    
+    function playCardsLocal(cards) {
+        if (GameState.phase !== 'playing' || GameState.currentPlayer !== myPlayerIndex) return;
+        if (!cards.length) return;
+        const type = getCardType(cards);
+        if (!type) { showToast("无效牌型"); return; }
+        if (!canBeat(type, GameState.lastPlay)) { showToast("需要大过上家"); return; }
+        // 移除手牌
+        GameState.players[myPlayerIndex] = GameState.players[myPlayerIndex].filter(c => !cards.includes(c));
+        GameState.lastPlay = type;
+        GameState.lastPlayerId = myPlayerIndex;
+        GameState.passCount = 0;
+        if (!GameState.firstPlayMade) {
+            GameState.firstPlayMade = true;
+            if (myPlayerIndex === GameState.landlord) GameState.lordPlayCount++;
+        } else {
+            if (myPlayerIndex === GameState.landlord) GameState.lordPlayCount++;
+            else GameState.farmerPlayed = true;
+        }
+        if (type.type === CardType.BOMB || type.type === CardType.ROCKET) {
+            GameState.bombCount++;
+            GameState.currentScore *= 2;
+        }
+        // 更新本地手牌
+        myHand = GameState.players[myPlayerIndex];
+        renderUI();
+        // 检查胜利
+        if (myHand.length === 0) {
+            endGameOnline(myPlayerIndex);
+            return;
+        }
+        // 下一家
+        GameState.currentPlayer = (myPlayerIndex + 1) % 3;
+        broadcastState();
+        processPlayOnline();
+    }
+    
+    function passTurnLocal() {
+        if (GameState.phase !== 'playing' || GameState.currentPlayer !== myPlayerIndex) return;
+        if (!GameState.lastPlay || GameState.lastPlayerId === myPlayerIndex) { showToast("不能不出"); return; }
+        GameState.passCount++;
+        GameState.currentPlayer = (myPlayerIndex + 1) % 3;
+        broadcastState();
+        processPlayOnline();
+    }
+    
+    function endGameOnline(winner) {
+        GameState.phase = 'gameover';
+        // 计算筹码变化
+        let multiplier = GameState.currentScore * Math.pow(2, GameState.bombCount);
+        let isSpring = false, isAntiSpring = false;
+        if (winner === GameState.landlord && !GameState.farmerPlayed && GameState.firstPlayMade) isSpring = true;
+        if (winner !== GameState.landlord && GameState.lordPlayCount === 1 && GameState.firstPlayMade) isAntiSpring = true;
+        if (isSpring) multiplier *= 2;
+        if (isAntiSpring) multiplier *= 2;
+        let amount = Math.min(100 * multiplier, 9999);
+        if (winner === 0) { // 自己赢
+            coins += amount;
+            stats.win++;
+        } else {
+            coins -= amount;
+            if (coins < 0) coins = 0;
+        }
+        updateStatsUI();
+        addMatchRecord(winner === 0 ? 'win' : 'lose', multiplier, winner === 0 ? amount : -amount, coins);
+        showGameOver(winner === 0, amount);
+    }
+    
+    // ======================== UI 辅助函数 ========================
+    function renderUI() {
+        renderPlayerHand();
+        updateCounts();
+        document.getElementById('scoreDisplay').innerHTML = `底分: ${GameState.currentScore}`;
+        const lastPlayArea = document.getElementById('playArea');
+        if (GameState.lastPlay) {
+            lastPlayArea.innerHTML = '';
+            GameState.lastPlay.cards.forEach(card => {
+                const div = document.createElement('div');
+                div.className = `w-8 h-11 bg-white border-2 border-black rounded flex flex-col items-center justify-center text-[8px] ${card.suit==='♥'||card.suit==='♦'||card.suit==='JOKER'?'text-red-500':'text-black'}`;
+                if (card.suit === 'JOKER') { div.innerHTML = `<span>${card.rank[0]}</span>`; div.className += ' bg-yellow-50'; }
+                else div.innerHTML = `<span>${card.suit}</span><span>${card.rank}</span>`;
+                lastPlayArea.appendChild(div);
+            });
+        } else {
+            lastPlayArea.innerHTML = '<span class="text-gray-500 text-[10px]">等待出牌...</span>';
+        }
+    }
+    
+    function renderPlayerHand() {
+        const container = document.getElementById('playerHand');
+        container.innerHTML = '';
+        if (!myHand) return;
+        myHand.sort((a,b)=>a.value-b.value);
+        const row1Count = Math.ceil(myHand.length/2);
+        const row1 = document.createElement('div'); row1.className = 'card-row';
+        myHand.slice(0,row1Count).forEach((card, idx) => {
+            row1.appendChild(createCardElement(card, idx));
+        });
+        container.appendChild(row1);
+        if (myHand.length > row1Count) {
+            const row2 = document.createElement('div'); row2.className = 'card-row second';
+            myHand.slice(row1Count).forEach((card, idx) => {
+                row2.appendChild(createCardElement(card, idx));
+            });
+            container.appendChild(row2);
+        }
+    }
+    
+    function createCardElement(card, index) {
+        const div = document.createElement('div');
+        div.className = `card ${selectedCards.has(card) ? 'selected' : ''}`;
+        const isSmall = window.innerWidth <= 380;
+        div.style.width = isSmall?'38px':(window.innerWidth<=768?'44px':'60px');
+        div.style.height = isSmall?'53px':(window.innerWidth<=768?'61px':'84px');
+        div.style.fontSize = isSmall?'9px':(window.innerWidth<=768?'11px':'14px');
+        if (index > 0) div.style.marginLeft = isSmall?'-16px':(window.innerWidth<=768?'-18px':'-20px');
+        const isRed = card.suit === '♥' || card.suit === '♦' || card.suit === 'JOKER';
+        div.className += isRed ? ' suit-red' : ' suit-black';
+        if (card.suit === 'JOKER') {
+            div.innerHTML = `<div class="font-bold text-center leading-tight" style="font-size:0.8em;">${card.rank}</div>`;
+        } else {
+            div.innerHTML = `<div class="font-bold text-center">${card.suit}</div><div class="font-bold text-center" style="font-size:0.9em;">${card.rank}</div>`;
+        }
+        div.onclick = (e) => {
+            e.stopPropagation();
+            if (GameState.phase === 'playing' && GameState.currentPlayer === myPlayerIndex) {
+                if (selectedCards.has(card)) selectedCards.delete(card);
+                else selectedCards.add(card);
+                renderPlayerHand();
+            }
+        };
+        return div;
+    }
+    
+    function updateCounts() {
+        document.getElementById('leftCount').innerText = GameState.players[1]?.length || 0;
+        document.getElementById('rightCount').innerText = GameState.players[2]?.length || 0;
+    }
+    
+    function enablePlayControls(enabled) {
+        const playBtn = document.getElementById('playBtn');
+        const passBtn = document.getElementById('passBtn');
+        if (playBtn) playBtn.disabled = !enabled;
+        if (passBtn) passBtn.disabled = !enabled;
+    }
+    
+    function showCallButtons(isMyTurn) {
+        const callDiv = document.getElementById('controls');
+        if (isMyTurn) {
+            callDiv.innerHTML = `<button class="pixel-btn bg-green-500 text-[10px]" onclick="callScore(0)">不叫</button>
+                                 <button class="pixel-btn bg-blue-500 text-[10px]" onclick="callScore(1)">1分</button>
+                                 <button class="pixel-btn bg-yellow-500 text-[10px]" onclick="callScore(2)">2分</button>
+                                 <button class="pixel-btn bg-red-500 text-[10px]" onclick="callScore(3)">3分</button>`;
+        } else {
+            callDiv.innerHTML = `<button class="pixel-btn bg-gray-500 text-[10px]" disabled>等待叫分</button>`;
+        }
+    }
+    
+    function callScore(score) {
+        sendAction('call', { score });
+    }
+    
+    function playCards() {
+        const cards = Array.from(selectedCards);
+        if (cards.length === 0) return showToast("请选择牌");
+        sendAction('play', { cards });
+        selectedCards.clear();
+        renderPlayerHand();
+    }
+    
+    function passTurn() {
+        sendAction('pass', {});
+    }
+    
+    function resetSelection() {
+        selectedCards.clear();
+        renderPlayerHand();
+    }
+    
+    function showHint() {
+        showToast("联机模式无提示，自己思考吧");
+    }
+    
+    // ======================== 辅助工具 ========================
+    function createDeck() {
+        const suits = ['♠','♥','♣','♦'], ranks = ['3','4','5','6','7','8','9','10','J','Q','K','A','2'];
+        let deck = [];
+        for (let suit of suits) for (let i=0;i<ranks.length;i++) deck.push({ suit, rank: ranks[i], value: i, id: suit+ranks[i] });
+        deck.push({ suit:'JOKER', rank:'小王', value:13, id:'joker1' }, { suit:'JOKER', rank:'大王', value:14, id:'joker2' });
+        return deck;
+    }
+    function shuffle(arr) { for(let i=arr.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [arr[i],arr[j]]=[arr[j],arr[i]]; } return arr; }
+    function countValues(values) { let cnt = {}; values.forEach(v => cnt[v] = (cnt[v] || 0) + 1); return cnt; }
+    function isStraight(values) { for (let i=1;i<values.length;i++) if (values[i] !== values[i-1]+1) return false; return true; }
+    const CardType = { SINGLE:'single', PAIR:'pair', TRIPLE:'triple', TRIPLE_WITH_SINGLE:'triple_single', TRIPLE_WITH_PAIR:'triple_pair', STRAIGHT:'straight', STRAIGHT_PAIR:'straight_pair', FOUR_WITH_TWO_SINGLE:'four_two_single', FOUR_WITH_TWO_PAIR:'four_two_pair', BOMB:'bomb', ROCKET:'rocket' };
+    function getCardType(cards) {
+        if (!cards || cards.length===0) return null;
+        const sorted = [...cards].sort((a,b)=>a.value-b.value);
+        const values = sorted.map(c=>c.value);
+        const uniq = [...new Set(values)];
+        if (cards.length===2 && cards.some(c=>c.id==='joker1') && cards.some(c=>c.id==='joker2')) return { type:CardType.ROCKET, value:100, cards:sorted };
+        if (cards.length===1) return { type:CardType.SINGLE, value:values[0], cards:sorted };
+        if (cards.length===2 && uniq.length===1) return { type:CardType.PAIR, value:values[0], cards:sorted };
+        if (cards.length===3 && uniq.length===1) return { type:CardType.TRIPLE, value:values[0], cards:sorted };
+        if (cards.length===4 && uniq.length===1) return { type:CardType.BOMB, value:values[0]+50, cards:sorted };
+        if (cards.length===4 && uniq.length===2) { let cnt = countValues(values); if (Object.values(cnt).includes(3)) return { type:CardType.TRIPLE_WITH_SINGLE, value:parseInt(Object.keys(cnt).find(k=>cnt[k]===3)), cards:sorted }; }
+        if (cards.length===5 && uniq.length===2) { let cnt = countValues(values); if (Object.values(cnt).includes(3) && Object.values(cnt).includes(2)) return { type:CardType.TRIPLE_WITH_PAIR, value:parseInt(Object.keys(cnt).find(k=>cnt[k]===3)), cards:sorted }; }
+        if (cards.length===6) { let cnt = countValues(values); let four = Object.keys(cnt).find(k=>cnt[k]===4); if (four && Object.values(cnt).filter(v=>v===1).length===2) return { type:CardType.FOUR_WITH_TWO_SINGLE, value:parseInt(four), cards:sorted }; }
+        if (cards.length===8) { let cnt = countValues(values); let four = Object.keys(cnt).find(k=>cnt[k]===4); if (four && Object.values(cnt).filter(v=>v===2).length===2) return { type:CardType.FOUR_WITH_TWO_PAIR, value:parseInt(four), cards:sorted }; }
+        if (cards.length>=5 && uniq.length===cards.length && isStraight(values) && values[cards.length-1]<=11 && !values.includes(12)) return { type:CardType.STRAIGHT, value:values[0], length:cards.length, cards:sorted };
+        if (cards.length>=6 && cards.length%2===0) {
+            let cnt = countValues(values);
+            let pairs = Object.keys(cnt).filter(k=>cnt[k]===2).map(Number).sort((a,b)=>a-b);
+            if (pairs.length===cards.length/2 && isStraight(pairs) && pairs[pairs.length-1]<=11 && !pairs.includes(12)) return { type:CardType.STRAIGHT_PAIR, value:pairs[0], length:pairs.length, cards:sorted };
+        }
+        return null;
+    }
+    function canBeat(current, last) {
+        if (!last) return true;
+        if (current.type === CardType.ROCKET) return true;
+        if (last.type === CardType.ROCKET) return false;
+        if (current.type === CardType.BOMB && last.type !== CardType.BOMB) return true;
+        if (last.type === CardType.BOMB && current.type !== CardType.BOMB) return false;
+        if (current.type !== last.type) return false;
+        if (current.length && current.length !== last.length) return false;
+        if ([CardType.TRIPLE_WITH_PAIR, CardType.FOUR_WITH_TWO_SINGLE, CardType.FOUR_WITH_TWO_PAIR].includes(current.type)) return current.value > last.value;
+        return current.value > last.value;
+    }
+    
+    // 战绩存储
+    function loadHistory() { let saved = localStorage.getItem('landlord_stats'); if (saved) { try { const data = JSON.parse(saved); matchHistory = data.history || []; coins = data.coins || 1000; stats = data.stats || {total:0,win:0}; } catch(e){} } else { matchHistory = []; coins = 1000; stats = { total: 0, win: 0 }; } updateStatsUI(); }
+    function saveHistory() { localStorage.setItem('landlord_stats', JSON.stringify({ coins, stats, history: matchHistory })); }
+    function addMatchRecord(result, multiplier, delta, coinsAfter) { let now = new Date(); let timeStr = `${now.getMonth()+1}/${now.getDate()} ${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}`; matchHistory.unshift({ time: timeStr, result: result, multiplier: multiplier, delta: delta, coinsAfter: coinsAfter }); if (matchHistory.length > 50) matchHistory.pop(); saveHistory(); }
+    function showStatsModal() { let modal = document.getElementById('statsModal'), container = document.getElementById('statsList'); if (matchHistory.length === 0) container.innerHTML = '<div class="text-center text-gray-400 text-[10px] py-4">暂无对局记录</div>'; else { let html = ''; for (let rec of matchHistory) { let resultClass = rec.result === 'win' ? 'history-win' : 'history-lose'; let deltaStr = rec.delta > 0 ? `+${rec.delta}` : `${rec.delta}`; html += `<div class="history-item ${resultClass} text-[10px]"><div>${rec.time}</div><div>${rec.result === 'win' ? '🎉 胜利' : '💔 失败'} (倍数:${rec.multiplier})</div><div>筹码变化: ${deltaStr} → ${rec.coinsAfter}</div></div>`; } container.innerHTML = html; } modal.classList.remove('hidden'); }
+    function closeStatsModal() { document.getElementById('statsModal').classList.add('hidden'); }
+    function clearHistory() { if (confirm('确定清空所有历史战绩吗？')) { matchHistory = []; saveHistory(); showStatsModal(); showToast('历史记录已清空'); } }
+    function updateStatsUI() { document.getElementById('coins').innerText = coins; }
+    function showGameOver(isWin, amount) { const screen = document.getElementById('gameOverScreen'); const title = document.getElementById('resultTitle'); const content = document.getElementById('resultContent'); screen.classList.remove('hidden'); if (isWin) { title.textContent = '🎉 胜利！'; title.className = 'text-xl retro-text mb-4 text-yellow-400 text-center'; content.innerHTML = `赢得 ${amount} 筹码<br>余额：${coins}`; } else { title.textContent = '💔 失败'; title.className = 'text-xl retro-text mb-4 text-gray-400 text-center'; content.innerHTML = `失去 ${amount} 筹码<br>余额：${coins}`; } }
+    function resetGame() { document.getElementById('gameOverScreen').classList.add('hidden'); if (myRole === 'host') initOnlineGame(); else showToast("等待房主开始新游戏"); }
+    function toggleRules() { document.getElementById('rulesModal').classList.toggle('hidden'); }
+    function showToast(msg) { let existing = document.querySelector('.toast'); if(existing) existing.remove(); let div = document.createElement('div'); div.className = 'toast'; div.textContent = msg; document.body.appendChild(div); setTimeout(()=>div.remove(),2000); }
+    
+    // 初始化
+    window.onload = () => {
+        loadHistory();
+        initPeer();
+        // 绑定出牌按钮（动态创建）
+        const controlsDiv = document.getElementById('controls');
+        // 在需要时替换内容，但先添加默认按钮
+        controlsDiv.innerHTML = `<button id="playBtn" class="pixel-btn bg-green-500 min-w-[80px]" onclick="playCards()">出牌</button><button id="passBtn" class="pixel-btn bg-gray-500 min-w-[80px]" onclick="passTurn()">不出</button><button class="pixel-btn bg-blue-500 text-[10px]" onclick="showHint()">提示</button>`;
+        enablePlayControls(false);
+    };
+</script>
+<script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sv.js').then(reg => {
+      console.log('Service Worker 注册成功，作用域:', reg.scope);
+    }).catch(err => {
+      console.error('Service Worker 注册失败:', err);
+    });
+  }
+</script> 
+</body>
+</html>
